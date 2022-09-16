@@ -161,3 +161,8 @@ cython_debug/
 
 # VSCode
 .vscode/
+
+!.gitkeep
+
+# Airflow
+logs/

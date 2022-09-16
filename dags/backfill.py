@@ -14,71 +14,83 @@ from airflow.utils.types import DagRunType
 
 DEFAULT_DAG_ID: str = "default_dag"
 DEFAULT_POKE_INTERVAL: int = 60
-DEFAULT_PARAMS: ParamsDict = ParamsDict(
-    {
-        "dag_id": Param(
-            DEFAULT_DAG_ID, "DAG ID to be backfilled", type="string"
-        ),
-        "dag_run_params": Param(
-            {},
-            "Parameters to be passed to the backfilled DAG Run",
-            type="object",
-        ),
-        "reset_dag_run": Param(
-            False,
-            "Whether or not clear existing dag run if already exists",
-            type="boolean",
-        ),
-        "wait_for_completion": Param(
-            False,
-            "Whether or not wait for each dag run completion",
-            type="boolean",
-        ),
-        "poke_interval": Param(
-            DEFAULT_POKE_INTERVAL,
-            "Poke interval to check dag run status to wait for completion",
-            type="integer",
-            minimum=0,
-        ),
-        "allowed_states": Param(
-            [State.SUCCESS],
-            "List of allowed states",
-            type="array",
-            items={"type": "string"},
-        ),
-        "failed_states": Param(
-            [State.FAILED],
-            "List of failed or dis-allowed states",
-            type="array",
-            items={"type": "string"},
-        ),
-        "start_date": Param(
-            None,
-            "start date of backfill to date range",
-            type=["null", "string"],
-            format="date",
-        ),
-        "end_date": Param(
-            None,
-            "start date of backfill to date range",
-            type=["null", "string"],
-            format="date",
-        ),
-        "dag_schedule_interval": Param(
-            timedelta(days=1),
-            "Schedule interval of the backfilled DAG",
-            type="string",
-            format="duration",
-        ),
-        "backfill_dates": Param(
-            [],
-            "List of dates to backfill",
-            type="array",
-            uniqueItems=True,
-            items={"type": "string", "format": "date"},
-        ),
-    },
-)
+DEFAULT_PARAMS: Dict[str, Param] = {
+    "dag_id": Param(DEFAULT_DAG_ID, "DAG ID to be backfilled", type="string"),
+    "dag_run_params": Param(
+        {},
+        "Parameters to be passed to the backfilled DAG Run",
+        type="object",
+    ),
+    "reset_dag_run": Param(
+        False,
+        "Whether or not clear existing dag run if already exists",
+        type="boolean",
+    ),
+    "wait_for_completion": Param(
+        False,
+        "Whether or not wait for each dag run completion",
+        type="boolean",
+    ),
+    "poke_interval": Param(
+        DEFAULT_POKE_INTERVAL,
+        "Poke interval to check dag run status to wait for completion",
+        type="integer",
+        minimum=0,
+    ),
+    "allowed_states": Param(
+        [State.SUCCESS],
+        "List of allowed states",
+        type="array",
+        items={"type": "string"},
+    ),
+    "failed_states": Param(
+        [State.FAILED],
+        "List of failed or dis-allowed states",
+        type="array",
+        items={"type": "string"},
+    ),
+    "start_date": Param(
+        None,
+        "start date of backfill to date range",
+        type=["null", "string"],
+        format="date",
+    ),
+    "end_date": Param(
+        None,
+        "start date of backfill to date range",
+        type=["null", "string"],
+        format="date",
+    ),
+    "date_range_interval": Param(
+        {
+            "days": 1,
+            "seconds": 0,
+            "microseconds": 0,
+            "milliseconds": 0,
+            "minutes": 0,
+            "hours": 0,
+            "weeks": 0,
+        },
+        "Schedule interval of the backfilled DAG",
+        type="object",
+        properties={
+            "days": {"type": "number"},
+            "seconds": {"type": "number"},
+            "microseconds": {"type": "number"},
+            "milliseconds": {"type": "number"},
+            "minutes": {"type": "number"},
+            "hours": {"type": "number"},
+            "weeks": {"type": "number"},
+        },
+    ),
+    "backfill_dates": Param(
+        [],
+        "List of dates to backfill",
+        type="array",
+        uniqueItems=True,
+        items={"type": "string", "format": "date"},
+    ),
+}
 
 logger: Logger = getLogger(__name__)
 
@@ -114,7 +126,7 @@ class BackfillOperator(TriggerDagRunOperator):
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         backfill_dates: List[datetime] = [],
-        dag_schedule_interval: timedelta = timedelta(days=1),
+        date_range_interval: timedelta = timedelta(days=1),
     ) -> List[datetime]:
         if not any([all([start_date, end_date]), backfill_dates]):
             raise ValueError(
@@ -123,7 +135,7 @@ class BackfillOperator(TriggerDagRunOperator):
             )
         if all(start_date, end_date):
             date_range: List[datetime] = list(
-                date_range(start_date, end_date, dag_schedule_interval)
+                date_range(start_date, end_date, date_range_interval)
             )
             backfill_dates.extend(date_range)
         backfill_dates = list(set(backfill_dates))
@@ -149,9 +161,11 @@ class BackfillOperator(TriggerDagRunOperator):
         start_date: Optional[datetime] = params["start_date"]
         end_date: Optional[datetime] = params["end_date"]
         backfill_dates: Optional[List[datetime]] = params["backfill_dates"]
-        dag_schedule_interval: timedelta = params["dag_schedule_interval"]
+        date_range_interval: timedelta = timedelta(
+            **params["date_range_interval"]
+        )
         backfill_dates = self.construct_backfill_dates(
-            start_date, end_date, backfill_dates, dag_schedule_interval
+            start_date, end_date, backfill_dates, date_range_interval
         )
 
         for backfill_date in backfill_dates:
@@ -168,21 +182,22 @@ class BackfillOperator(TriggerDagRunOperator):
             super().execute(context)
 
 
-default_args: Dict[str, Any] = (
-    {
-        "depends_on_past": False,
-        "email_on_failure": False,
-        "email_on_retry": False,
-        "retries": 5,
-        "retry_exponential_backoff": True,
-    },
-)
+default_args: Dict[str, Any] = {
+    "depends_on_past": False,
+    "email_on_failure": False,
+    "email_on_retry": False,
+    "retries": 5,
+    "retry_exponential_backoff": True,
+}
 
 with DAG(
     dag_id="backfill",
     description="DAG to backfill other DAGs",
+    start_date=datetime(2022, 1, 1),
     default_args=default_args,
     params=DEFAULT_PARAMS,
+    schedule_interval=None,
+    catchup=False,
 ) as dag:
     start: EmptyOperator = EmptyOperator(task_id="start")
     backfill: BackfillOperator = BackfillOperator(task_id="backfill")
